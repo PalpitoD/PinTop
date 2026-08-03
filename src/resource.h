@@ -10,7 +10,8 @@
 #define IDR_PIN32 203
 
 // 托盘菜单命令 ID
-#define CM_NEWPIN 1001
-#define CM_EXIT   1002
+#define CM_NEWPIN    1001
+#define CM_EXIT      1002
+#define CM_AUTOSTART 1003
 
 #endif // PINTOP_RESOURCE_H

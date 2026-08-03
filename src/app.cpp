@@ -8,6 +8,7 @@
 #include <cwchar>
 #include <cstdlib>
 #include <objbase.h> // CoInitializeEx（WIN32_LEAN_AND_MEAN 下不随 windows.h 引入）
+#include <string>    // std::wstring（自启注册表路径）
 
 namespace {
 
@@ -27,14 +28,15 @@ int App::run(HINSTANCE hInst)
     hInst_ = hInst;
     PinWnd::setHInstance(hInst_);
 
-    // COM：WIC（图钉 PNG 解码）需要
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    // COM：WIC（图钉 PNG 解码）需要。失败不致命：托盘/热键/置顶逻辑不受影响，仅图钉渲染不可用。
+    const HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     // Per-Monitor V2 DPI 感知（Windows 10 1703+）：
     // 避免系统按位图缩放导致图标/坐标模糊错位。
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     if (!createMainWindow()) {
+        if (SUCCEEDED(coHr)) CoUninitialize();
         return 1;
     }
     addTrayIcon();
@@ -48,10 +50,11 @@ int App::run(HINSTANCE hInst)
         DispatchMessageW(&msg);
     }
 
-    // 退出清理：取消全部置顶并移除图钉
+    // 退出清理：取消全部置顶、移除图钉、注销热键与事件钩子
     PinWnd::removeAll();
     uninstallWinEventHook();
-    CoUninitialize();
+    HotKey::unregister(mainWnd_);
+    if (SUCCEEDED(coHr)) CoUninitialize();
     return static_cast<int>(msg.wParam);
 }
 
@@ -111,6 +114,8 @@ void App::showTrayMenu()
 {
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, CM_NEWPIN, L"置顶窗口(&P)...");
+    AppendMenuW(menu, (isAutoStart() ? MF_CHECKED : 0) | MF_STRING,
+                CM_AUTOSTART, L"开机自启(&S)");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CM_EXIT, L"退出(&X)");
 
@@ -152,6 +157,9 @@ void App::onCommand(int id)
     switch (id) {
     case CM_NEWPIN:
         startPinPlacement();
+        break;
+    case CM_AUTOSTART:
+        setAutoStart(!isAutoStart());
         break;
     case CM_EXIT:
         exitApp();
@@ -241,6 +249,7 @@ void App::installWinEventHook()
 {
     // 单钩子覆盖 [EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE] 范围：
     // 目标窗口销毁时清理图钉，位置变化时图钉跟随。回调内按事件过滤。
+    // 失败不致命：仅图钉不跟随/不自动清理，其余功能正常。
     winEventHook_ = SetWinEventHook(
         EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE, nullptr,
         winEventProc, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
@@ -265,4 +274,39 @@ void CALLBACK App::winEventProc(HWINEVENTHOOK, DWORD event, HWND hwnd,
     } else if (event == EVENT_OBJECT_DESTROY) {
         PinWnd::remove(hwnd);
     }
+}
+
+bool App::isAutoStart() const
+{
+    HKEY key{};
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                      0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) {
+        return false;
+    }
+    DWORD type = 0;
+    const LONG r = RegQueryValueExW(key, L"PinTop", nullptr, &type, nullptr, nullptr);
+    RegCloseKey(key);
+    return r == ERROR_SUCCESS && type == REG_SZ;
+}
+
+void App::setAutoStart(bool enable)
+{
+    HKEY key{};
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                      0, KEY_SET_VALUE, &key) != ERROR_SUCCESS) {
+        return;
+    }
+    if (enable) {
+        wchar_t path[MAX_PATH]{};
+        if (GetModuleFileNameW(nullptr, path, MAX_PATH) > 0) {
+            // 路径加引号，防止含空格路径被拆成多个参数
+            const std::wstring cmd = L"\"" + std::wstring(path) + L"\"";
+            RegSetValueExW(key, L"PinTop", 0, REG_SZ,
+                           reinterpret_cast<const BYTE*>(cmd.c_str()),
+                           static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t)));
+        }
+    } else {
+        RegDeleteValueW(key, L"PinTop");
+    }
+    RegCloseKey(key);
 }

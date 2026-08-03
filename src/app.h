@@ -39,6 +39,10 @@ private:
     void installWinEventHook();
     void uninstallWinEventHook();
 
+    // 开机自启（HKCU Run 键）
+    bool isAutoStart() const;
+    void setAutoStart(bool enable);
+
     // 全局事件钩子回调（目标窗口移动/销毁时重定位/清理图钉）
     static void CALLBACK winEventProc(HWINEVENTHOOK hook, DWORD event, HWND hwnd,
                                       LONG idObject, LONG idChild, DWORD thread, DWORD time);
