@@ -8,6 +8,11 @@
 
 namespace {
 
+// WICPixelFormat32bppPremultipliedBGRA 的 GUID（SDK 文档值）。
+// 不用 SDK 头里的同名宏，避免 wincodec.h 的 WIC_GUID_NO_INIT 宏开关差异。
+constexpr GUID kPxFormat32bppPremultBGRA{
+    0x6fddc324, 0x4e03, 0x4bfe, {0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x13}};
+
 // 按 DPI 选择图钉位图尺寸：标准(96)~144 DPI 用 16px，144~192 用 24px，更高用 32px。
 int pickPinSize(int dpi)
 {
@@ -60,7 +65,7 @@ HBITMAP loadPinPng(int resId, SIZE& outSize)
         hr = factory->CreateFormatConverter(&conv);
         if (FAILED(hr)) break;
         // 转成预乘 alpha BGRA —— UpdateLayeredWindow(AC_SRC_ALPHA) 的硬性要求
-        hr = conv->Initialize(frame, &GUID_WICPixelFormat32bppPremultipliedBGRA,
+        hr = conv->Initialize(frame, &kPxFormat32bppPremultBGRA,
                               WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
         if (FAILED(hr)) break;
 
@@ -148,7 +153,7 @@ bool PinWnd::init()
     GetWindowRect(target_, &rc);
     const int captionH = GetSystemMetrics(SM_CYCAPTION);
     const int x = rc.right - size_.cx - 8;
-    const int y = rc.top + std::max(4, (captionH - size_.cy) / 2);
+    const int y = rc.top + std::max(4, static_cast<int>(captionH - size_.cy) / 2);
 
     hwnd_ = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
@@ -229,7 +234,7 @@ void PinWnd::repositionFor(HWND target)
     GetWindowRect(target, &rc);
     const int captionH = GetSystemMetrics(SM_CYCAPTION);
     const int x = rc.right - pin->size_.cx - 8;
-    const int y = rc.top + std::max(4, (captionH - pin->size_.cy) / 2);
+    const int y = rc.top + std::max(4, static_cast<int>(captionH - pin->size_.cy) / 2);
     SetWindowPos(pin->hwnd_, nullptr, x, y, 0, 0,
                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }

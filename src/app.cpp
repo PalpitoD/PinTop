@@ -6,6 +6,7 @@
 #include <shellapi.h>
 #include <cwchar>
 #include <cstdlib>
+#include <objbase.h> // CoInitializeEx（WIN32_LEAN_AND_MEAN 下不随 windows.h 引入）
 
 namespace {
 
