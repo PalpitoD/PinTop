@@ -1,0 +1,11 @@
+# 构建产物
+build/
+dist/
+out/
+.vs/
+CMakeLists.txt.user
+
+# IDE
+.vscode/
+.idea/
+*.user
