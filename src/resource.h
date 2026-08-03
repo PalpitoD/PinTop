@@ -7,7 +7,7 @@
 // 光标资源
 #define IDC_PLACEPIN 102
 
-// 图钉 PNG（RCDATA，WIC 运行时解码）
+// 图钉位图（RCDATA，预生成 premultiplied BGRA）
 #define IDR_PIN16 201
 #define IDR_PIN24 202
 #define IDR_PIN32 203

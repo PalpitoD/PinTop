@@ -18,7 +18,8 @@ public:
     void exitApp();
 
     // 自定义消息
-    static constexpr UINT WM_PINREQ = WM_APP + 2; // wParam/lParam = 目标屏幕坐标 x/y
+    static constexpr UINT WM_PINREQ    = WM_APP + 2; // wParam/lParam = 目标屏幕坐标 x/y
+    static constexpr UINT WM_CANCELPIN = WM_APP + 3; // 右键取消置顶模式
 
 private:
     App() = default;

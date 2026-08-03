@@ -6,7 +6,6 @@
 #include <shellapi.h>
 #include <cwchar>
 #include <cstdlib>
-#include <objbase.h> // CoInitializeEx（WIN32_LEAN_AND_MEAN 下不随 windows.h 引入）
 
 namespace {
 
@@ -19,6 +18,10 @@ bool isSystemShellWindow(HWND hwnd)
 {
     wchar_t cls[64]{};
     if (GetClassNameW(hwnd, cls, 64) > 0) {
+        // 文件资源管理器窗口（也跑在 explorer.exe 里）不是外壳，允许置顶
+        if (wcscmp(cls, L"CabinetWClass") == 0 || wcscmp(cls, L"ExploreWClass") == 0) {
+            return false;
+        }
         const wchar_t* blocked[] = {
             L"Shell_TrayWnd",        // 任务栏
             L"Shell_SecondaryTrayWnd", // 副屏任务栏
@@ -40,8 +43,12 @@ bool isSystemShellWindow(HWND hwnd)
     if (!proc) return false;
     wchar_t path[MAX_PATH]{};
     DWORD len = MAX_PATH;
-    const bool isShell = QueryFullProcessImageNameW(proc, 0, path, &len)
-                         && wcsstr(path, L"explorer.exe") != nullptr;
+    bool isShell = false;
+    if (QueryFullProcessImageNameW(proc, 0, path, &len)) {
+        const wchar_t* name = wcsrchr(path, L'\\');
+        name = name ? name + 1 : path;
+        isShell = _wcsicmp(name, L"explorer.exe") == 0;
+    }
     CloseHandle(proc);
     return isShell;
 }
@@ -59,15 +66,11 @@ int App::run(HINSTANCE hInst)
     hInst_ = hInst;
     PinWnd::setHInstance(hInst_);
 
-    // COM：WIC（图钉 PNG 解码）需要。失败不致命：托盘/置顶逻辑不受影响，仅图钉渲染不可用。
-    const HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-
     // Per-Monitor V2 DPI 感知（Windows 10 1703+）：
     // 避免系统按位图缩放导致图标/坐标模糊错位。
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     if (!createMainWindow()) {
-        if (SUCCEEDED(coHr)) CoUninitialize();
         return 1;
     }
     addTrayIcon();
@@ -83,7 +86,6 @@ int App::run(HINSTANCE hInst)
     LayerWnd::cancel();
     PinWnd::removeAll();
     uninstallWinEventHook();
-    if (SUCCEEDED(coHr)) CoUninitialize();
     return static_cast<int>(msg.wParam);
 }
 
@@ -219,6 +221,10 @@ LRESULT App::handleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     case WM_PINREQ:
         placePinAt(POINT{ static_cast<int>(wParam), static_cast<int>(lParam) });
+        return 0;
+    case WM_CANCELPIN:
+        // 右键取消置顶模式（主线程统一收尾，避免钩子回调里做全局广播）
+        LayerWnd::cancel();
         return 0;
     case WM_DESTROY:
         removeTrayIcon();

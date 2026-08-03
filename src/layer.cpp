@@ -35,7 +35,9 @@ bool LayerWnd::start(HWND owner)
     // 临时把系统箭头光标替换为图钉：任何窗口的 WM_SETCURSOR 设置箭头时
     // 都会显示图钉，无需依赖捕获/窗口消息，光标稳定保持。
     if (HCURSOR pin = CopyIcon(placePinCursor())) {
-        SetSystemCursor(pin, 32512); // OCR_NORMAL（系统箭头光标 ID）
+        if (!SetSystemCursor(pin, 32512)) { // OCR_NORMAL（系统箭头光标 ID）
+            DestroyCursor(pin); // 替换失败时释放副本
+        }
     }
     return true;
 }
@@ -61,16 +63,14 @@ LRESULT CALLBACK LayerWnd::mouseHook(int nCode, WPARAM wParam, LPARAM lParam)
     if (nCode == HC_ACTION) {
         const auto* ms = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
         switch (wParam) {
-        case WM_LBUTTONDOWN: {
-            // 用户点击目标：把屏幕坐标交给 App 放置图钉。
+        case WM_LBUTTONDOWN:
+            // 完成置顶：坐标交给 App 处理（主线程内 cancel）。
             // 吞掉点击本身（返回 1），避免真实点击落在目标窗口上。
             PostMessageW(owner_, App::WM_PINREQ, ms->pt.x, ms->pt.y);
-            cancel();
             return 1;
-        }
         case WM_RBUTTONDOWN:
-            // 右键取消放置模式
-            cancel();
+            // 右键取消：交给主线程统一收尾（钩子回调里不做全局广播等重操作）
+            PostMessageW(owner_, App::WM_CANCELPIN, 0, 0);
             return 1;
         default:
             // 其余事件（移动/滚轮等）一律放行，绝不拦截系统鼠标
