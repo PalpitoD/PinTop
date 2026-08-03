@@ -2,13 +2,11 @@
 #include "resource.h"
 #include "pin.h"
 #include "layer.h"
-#include "hotkey.h"
 
 #include <shellapi.h>
 #include <cwchar>
 #include <cstdlib>
 #include <objbase.h> // CoInitializeEx（WIN32_LEAN_AND_MEAN 下不随 windows.h 引入）
-#include <string>    // std::wstring（自启注册表路径）
 
 namespace {
 
@@ -28,7 +26,7 @@ int App::run(HINSTANCE hInst)
     hInst_ = hInst;
     PinWnd::setHInstance(hInst_);
 
-    // COM：WIC（图钉 PNG 解码）需要。失败不致命：托盘/热键/置顶逻辑不受影响，仅图钉渲染不可用。
+    // COM：WIC（图钉 PNG 解码）需要。失败不致命：托盘/置顶逻辑不受影响，仅图钉渲染不可用。
     const HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     // Per-Monitor V2 DPI 感知（Windows 10 1703+）：
@@ -41,8 +39,6 @@ int App::run(HINSTANCE hInst)
     }
     addTrayIcon();
     installWinEventHook();
-    // 全局热键失败不阻塞启动（可能被其他程序占用）
-    HotKey::registerDefault(mainWnd_);
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0)) {
@@ -50,10 +46,9 @@ int App::run(HINSTANCE hInst)
         DispatchMessageW(&msg);
     }
 
-    // 退出清理：取消全部置顶、移除图钉、注销热键与事件钩子
+    // 退出清理：取消全部置顶并移除图钉
     PinWnd::removeAll();
     uninstallWinEventHook();
-    HotKey::unregister(mainWnd_);
     if (SUCCEEDED(coHr)) CoUninitialize();
     return static_cast<int>(msg.wParam);
 }
@@ -114,8 +109,6 @@ void App::showTrayMenu()
 {
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, CM_NEWPIN, L"置顶窗口(&P)...");
-    AppendMenuW(menu, (isAutoStart() ? MF_CHECKED : 0) | MF_STRING,
-                CM_AUTOSTART, L"开机自启(&S)");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CM_EXIT, L"退出(&X)");
 
@@ -140,12 +133,13 @@ void App::onTrayIcon(UINT msg, LPARAM lParam)
         return;
     }
     switch (LOWORD(lParam)) {
+    case WM_LBUTTONUP:
+        // 单击托盘图标 → 直接进入置顶模式（与旧版 DeskPins 交互一致）
+        startPinPlacement();
+        break;
     case WM_RBUTTONUP:
     case WM_CONTEXTMENU:
         showTrayMenu();
-        break;
-    case WM_LBUTTONDBLCLK:
-        // TODO: 双击托盘 → 进入置顶模式（与菜单"置顶窗口"一致）
         break;
     default:
         break;
@@ -157,9 +151,6 @@ void App::onCommand(int id)
     switch (id) {
     case CM_NEWPIN:
         startPinPlacement();
-        break;
-    case CM_AUTOSTART:
-        setAutoStart(!isAutoStart());
         break;
     case CM_EXIT:
         exitApp();
@@ -195,11 +186,6 @@ LRESULT App::handleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_PINREQ:
         placePinAt(POINT{ static_cast<int>(wParam), static_cast<int>(lParam) });
         return 0;
-    case WM_HOTKEY:
-        if (wParam == HotKey::ID) { // 防御：只响应自己的热键 ID
-            togglePinFor(GetForegroundWindow());
-        }
-        return 0;
     case WM_DESTROY:
         removeTrayIcon();
         PostQuitMessage(0);
@@ -232,19 +218,6 @@ void App::placePinAt(POINT pt)
     PinWnd::create(root);
 }
 
-void App::togglePinFor(HWND wnd)
-{
-    if (!wnd) return;
-    HWND root = GetAncestor(wnd, GA_ROOT);
-    if (!root || root == GetDesktopWindow() || root == mainWnd_) return;
-    if (!IsWindowVisible(root)) return; // 隐藏窗口不参与置顶
-    if (PinWnd::isPinned(root)) {
-        PinWnd::remove(root);
-    } else {
-        PinWnd::create(root);
-    }
-}
-
 void App::installWinEventHook()
 {
     // 单钩子覆盖 [EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE] 范围：
@@ -274,39 +247,4 @@ void CALLBACK App::winEventProc(HWINEVENTHOOK, DWORD event, HWND hwnd,
     } else if (event == EVENT_OBJECT_DESTROY) {
         PinWnd::remove(hwnd);
     }
-}
-
-bool App::isAutoStart() const
-{
-    HKEY key{};
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                      0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) {
-        return false;
-    }
-    DWORD type = 0;
-    const LONG r = RegQueryValueExW(key, L"PinTop", nullptr, &type, nullptr, nullptr);
-    RegCloseKey(key);
-    return r == ERROR_SUCCESS && type == REG_SZ;
-}
-
-void App::setAutoStart(bool enable)
-{
-    HKEY key{};
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                      0, KEY_SET_VALUE, &key) != ERROR_SUCCESS) {
-        return;
-    }
-    if (enable) {
-        wchar_t path[MAX_PATH]{};
-        if (GetModuleFileNameW(nullptr, path, MAX_PATH) > 0) {
-            // 路径加引号，防止含空格路径被拆成多个参数
-            const std::wstring cmd = L"\"" + std::wstring(path) + L"\"";
-            RegSetValueExW(key, L"PinTop", 0, REG_SZ,
-                           reinterpret_cast<const BYTE*>(cmd.c_str()),
-                           static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t)));
-        }
-    } else {
-        RegDeleteValueW(key, L"PinTop");
-    }
-    RegCloseKey(key);
 }

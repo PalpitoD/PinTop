@@ -1,14 +1,16 @@
 #include "layer.h"
 #include "app.h"
+#include "resource.h"
 
 #include <windowsx.h> // GET_X/Y_LPARAM
 
 namespace {
 
-// 放置模式光标：先用系统十字准星，后续可换成 SVG 渲染的 .cur
+// 放置模式光标：SVG 图钉形状（与图钉/图标同风格）
 HCURSOR placePinCursor()
 {
-    static HCURSOR cur = LoadCursorW(nullptr, IDC_CROSS);
+    static HCURSOR cur =
+        LoadCursorW(App::instance().hInstance(), MAKEINTRESOURCEW(IDC_PLACEPIN));
     return cur;
 }
 
@@ -71,6 +73,10 @@ LRESULT CALLBACK LayerWnd::proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_CREATE:
         gotInitLButtonDown = false;
         return 0;
+    case WM_SETCURSOR:
+        // 捕获期间显式设置图钉光标（类光标有时不生效，尤其捕获其他窗口消息时）
+        SetCursor(placePinCursor());
+        return TRUE;
     case WM_LBUTTONDOWN: {
         const int x = GET_X_LPARAM(lParam);
         const int y = GET_Y_LPARAM(lParam);

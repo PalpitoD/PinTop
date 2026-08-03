@@ -189,12 +189,13 @@ bool PinWnd::create(HWND target)
     if (find(target)) return true; // 已置顶，幂等
 
     auto* pin = new PinWnd(target);
+    // 先置顶目标窗口，再创建图钉窗口：同为 TOPMOST 时后创建者 Z 序更靠前，
+    // 图钉窗口才能盖在目标窗口标题栏上（顺序反了图钉会被目标窗口遮住）。
+    SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     if (!pin->init()) {
         delete pin;
         return false;
     }
-    // 置顶目标窗口（图钉窗口自身已是 WS_EX_TOPMOST）
-    SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     all_.emplace(target, pin);
     return true;
 }
@@ -224,19 +225,29 @@ void PinWnd::repositionFor(HWND target)
 {
     PinWnd* pin = find(target);
     if (!pin) return;
-    // 目标已销毁、隐藏或最小化 → 移除图钉。
-    // 注意：最小化窗口仍带 WS_VISIBLE，IsWindowVisible 不可靠，需 IsIconic。
-    if (!IsWindow(target) || !IsWindowVisible(target) || IsIconic(target)) {
-        remove(target);
+    if (!IsWindow(target)) {
+        remove(target); // 目标已销毁
         return;
     }
+    if (IsIconic(target)) {
+        // 最小化：保持置顶状态，只隐藏图钉（恢复时重新显示）
+        ShowWindow(pin->hwnd_, SW_HIDE);
+        return;
+    }
+    if (!IsWindowVisible(target)) {
+        remove(target); // 真正隐藏（非最小化）→ 解除置顶
+        return;
+    }
+
+    ShowWindow(pin->hwnd_, SW_SHOWNOACTIVATE);
     RECT rc{};
     GetWindowRect(target, &rc);
     const int captionH = GetSystemMetrics(SM_CYCAPTION);
     const int x = rc.right - pin->size_.cx - 8;
     const int y = rc.top + std::max(4, static_cast<int>(captionH - pin->size_.cy) / 2);
-    SetWindowPos(pin->hwnd_, nullptr, x, y, 0, 0,
-                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    // 保持图钉在 TOPMOST 层顶部（目标窗口置顶后可能遮挡图钉）
+    SetWindowPos(pin->hwnd_, HWND_TOPMOST, x, y, 0, 0,
+                 SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 bool PinWnd::isPinned(HWND target)
