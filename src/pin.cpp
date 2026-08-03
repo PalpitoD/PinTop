@@ -65,7 +65,7 @@ HBITMAP loadPinPng(int resId, SIZE& outSize)
         hr = factory->CreateFormatConverter(&conv);
         if (FAILED(hr)) break;
         // 转成预乘 alpha BGRA —— UpdateLayeredWindow(AC_SRC_ALPHA) 的硬性要求
-        hr = conv->Initialize(frame, &kPxFormat32bppPremultBGRA,
+        hr = conv->Initialize(frame, kPxFormat32bppPremultBGRA,
                               WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
         if (FAILED(hr)) break;
 
