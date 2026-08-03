@@ -11,6 +11,9 @@ HCURSOR placePinCursor()
 {
     static HCURSOR cur =
         LoadCursorW(App::instance().hInstance(), MAKEINTRESOURCEW(IDC_PLACEPIN));
+    if (cur == nullptr) {
+        cur = LoadCursorW(nullptr, IDC_CROSS); // 资源损坏兜底
+    }
     return cur;
 }
 
@@ -108,7 +111,9 @@ LRESULT CALLBACK LayerWnd::proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
     case WM_KILLFOCUS:
-        // 取消放置模式
+    case WM_CANCELMODE:
+        // 取消放置模式。WM_CANCELMODE：按 Alt/系统菜单等模态循环会由系统
+        // 自动释放捕获，若不销毁窗口，active() 仍为 true 会导致模式卡死。
         ReleaseCapture();
         hwnd_ = nullptr;
         DestroyWindow(hwnd);
