@@ -239,6 +239,7 @@ void App::startPinPlacement()
 {
     // 防重入：已在放置模式则忽略
     if (LayerWnd::active()) return;
+    // 钩子安装失败（低概率）时静默退出，不进入放置模式
     LayerWnd::start(mainWnd_);
 }
 

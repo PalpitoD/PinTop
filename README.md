@@ -24,7 +24,7 @@ cmake --build build --config Release
 - [x] 放置图钉（置顶窗口）：图层捕获选择目标，无合成鼠标输入，图钉光标
 - [x] 移除图钉（点击图钉 / 目标窗口销毁）
 - [x] 图钉跟随窗口移动（SetWinEventHook）；最小化保持置顶、恢复后图钉重现
-- [x] SVG 图钉：WIC 解码带 alpha 位图 + UpdateLayeredWindow 抗锯齿
+- [x] SVG 图钉：预生成 premultiplied BGRA + UpdateLayeredWindow 抗锯齿
 - [x] 应用/托盘图标与置顶光标：SVG 渲染（多尺寸 app.ico / placepin.cur）
 - [ ] 自动置顶规则
 - [ ] 选项对话框
