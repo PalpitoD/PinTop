@@ -3,6 +3,6 @@
 IDI_APP ICON "res/app.ico"
 IDC_PLACEPIN CURSOR "res/placepin.cur"
 
-IDR_PIN16 RCDATA "res/pin-16.png"
-IDR_PIN24 RCDATA "res/pin-24.png"
-IDR_PIN32 RCDATA "res/pin-32.png"
+IDR_PIN16 RCDATA "res/pin-16.raw"
+IDR_PIN24 RCDATA "res/pin-24.raw"
+IDR_PIN32 RCDATA "res/pin-32.raw"

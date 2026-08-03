@@ -13,6 +13,39 @@ namespace {
 // 托盘工具提示文本
 constexpr wchar_t kTrayTip[] = L"PinTop - 窗口置顶";
 
+// 系统外壳窗口（任务栏/桌面/开始菜单等）：不允许挂图钉，点击时静默退出置顶模式。
+// 判定：类名黑名单 + 所属进程为 explorer.exe（系统 UI 都跑在 explorer 里）。
+bool isSystemShellWindow(HWND hwnd)
+{
+    wchar_t cls[64]{};
+    if (GetClassNameW(hwnd, cls, 64) > 0) {
+        const wchar_t* blocked[] = {
+            L"Shell_TrayWnd",        // 任务栏
+            L"Shell_SecondaryTrayWnd", // 副屏任务栏
+            L"Progman",              // 桌面工作区
+            L"WorkerW",              // 桌面壁纸层
+            L"Button",               // 开始按钮
+            L"NotifyIconOverflowWindow", // 折叠托盘
+            L"Windows.UI.Core.CoreWindow", // 开始菜单/通知中心
+        };
+        for (const wchar_t* b : blocked) {
+            if (wcscmp(cls, b) == 0) return true;
+        }
+    }
+
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == 0) return false;
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc) return false;
+    wchar_t path[MAX_PATH]{};
+    DWORD len = MAX_PATH;
+    const bool isShell = QueryFullProcessImageNameW(proc, 0, path, &len)
+                         && wcsstr(path, L"explorer.exe") != nullptr;
+    CloseHandle(proc);
+    return isShell;
+}
+
 } // namespace
 
 App& App::instance()
@@ -46,7 +79,8 @@ int App::run(HINSTANCE hInst)
         DispatchMessageW(&msg);
     }
 
-    // 退出清理：取消全部置顶并移除图钉
+    // 退出清理：取消全部置顶、移除图钉、恢复光标与事件钩子
+    LayerWnd::cancel();
     PinWnd::removeAll();
     uninstallWinEventHook();
     if (SUCCEEDED(coHr)) CoUninitialize();
@@ -215,15 +249,8 @@ void App::placePinAt(POINT pt)
     if (!root || root == GetDesktopWindow()) return;
     if (root == mainWnd_ || PinWnd::isPinWindow(root)) return; // 排除自身与图钉窗口
 
-    // 系统窗口不可置顶（任务栏/桌面/开始按钮），避免产生无意义的残留图钉
-    wchar_t cls[64]{};
-    if (GetClassNameW(root, cls, 64) > 0) {
-        if (wcscmp(cls, L"Shell_TrayWnd") == 0 || // 任务栏
-            wcscmp(cls, L"Progman") == 0 ||        // 桌面工作区
-            wcscmp(cls, L"Button") == 0) {         // 开始按钮
-            return;
-        }
-    }
+    // 系统外壳窗口（任务栏/桌面/开始按钮/折叠托盘）：静默退出，不挂图钉
+    if (isSystemShellWindow(root)) return;
 
     PinWnd::create(root);
 }
