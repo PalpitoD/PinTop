@@ -238,6 +238,9 @@ bool PinWnd::create(HWND target)
     SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     if (!pin->init()) {
         delete pin;
+        // 回滚：图钉创建失败时撤销目标窗口的置顶，避免无法取消的残留
+        SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         return false;
     }
     all_.emplace(target, pin);
@@ -288,6 +291,14 @@ void PinWnd::repositionFor(HWND target)
     // 保持图钉在 TOPMOST 层顶部（目标窗口置顶后可能遮挡图钉）
     SetWindowPos(pin->hwnd_, HWND_TOPMOST, pos.x, pos.y, 0, 0,
                  SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+bool PinWnd::isPinWindow(HWND hwnd)
+{
+    for (auto& [t, pin] : all_) {
+        if (pin->hwnd_ == hwnd) return true;
+    }
+    return false;
 }
 
 bool PinWnd::isPinned(HWND target)

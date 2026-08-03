@@ -33,7 +33,7 @@ private:
     void onCommand(int id);
 
     // 置顶功能
-    void startPinPlacement();  // 进入"放置图钉"模式（图层捕获鼠标）
+    void startPinPlacement();  // 进入"放置图钉"模式（鼠标钩子捕获）
     void placePinAt(POINT pt); // 在屏幕坐标处放置图钉
     void installWinEventHook();
     void uninstallWinEventHook();

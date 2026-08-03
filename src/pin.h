@@ -17,6 +17,9 @@ public:
     // 目标窗口位置变化时由全局事件钩子调用，重定位图钉。
     static void repositionFor(HWND target);
 
+    // hwnd 是否为某个图钉窗口（放置模式点击过滤用）
+    static bool isPinWindow(HWND hwnd);
+
     static bool isPinned(HWND target);
 
 private:

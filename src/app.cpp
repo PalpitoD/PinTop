@@ -204,7 +204,7 @@ void App::startPinPlacement()
 
 void App::placePinAt(POINT pt)
 {
-    // 放置模式窗口已随点击销毁，这里兜底清理
+    // 放置模式钩子已随点击卸载，这里兜底清理
     LayerWnd::cancel();
 
     HWND target = WindowFromPoint(pt);
@@ -213,7 +213,17 @@ void App::placePinAt(POINT pt)
     // 取顶层根窗口，避免点在子控件上
     HWND root = GetAncestor(target, GA_ROOT);
     if (!root || root == GetDesktopWindow()) return;
-    if (root == mainWnd_) return; // 排除自己的隐藏宿主窗口
+    if (root == mainWnd_ || PinWnd::isPinWindow(root)) return; // 排除自身与图钉窗口
+
+    // 系统窗口不可置顶（任务栏/桌面/开始按钮），避免产生无意义的残留图钉
+    wchar_t cls[64]{};
+    if (GetClassNameW(root, cls, 64) > 0) {
+        if (wcscmp(cls, L"Shell_TrayWnd") == 0 || // 任务栏
+            wcscmp(cls, L"Progman") == 0 ||        // 桌面工作区
+            wcscmp(cls, L"Button") == 0) {         // 开始按钮
+            return;
+        }
+    }
 
     PinWnd::create(root);
 }
