@@ -3,14 +3,15 @@
 
 #include <wincodec.h>
 #include <objidl.h>
+#include <dwmapi.h>
 
 #include <algorithm>
 
 namespace {
 
-// WICPixelFormat32bppPremultipliedBGRA 的 GUID（SDK 文档值）。
+// WICPixelFormat32bppBGRA 的 GUID（SDK 文档值）。
 // 不用 SDK 头里的同名宏，避免 wincodec.h 的 WIC_GUID_NO_INIT 宏开关差异。
-constexpr GUID kPxFormat32bppPremultBGRA{
+constexpr GUID kPxFormat32bppBGRA{
     0x6fddc324, 0x4e03, 0x4bfe, {0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x13}};
 
 // 按 DPI 选择图钉位图尺寸：标准(96)~144 DPI 用 16px，144~192 用 24px，更高用 32px。
@@ -21,10 +22,12 @@ int pickPinSize(int dpi)
     return 32;
 }
 
-// 从 RCDATA 资源解码 PNG → 32bpp premultiplied-alpha 位图（供 UpdateLayeredWindow 使用）。
-// 返回的 HBITMAP 由调用者 DeleteObject。失败返回 nullptr。
-HBITMAP loadPinPng(int resId, SIZE& outSize)
+// 从 RCDATA 资源解码 PNG → 32bpp BGRA 位图，并用 alpha 生成异形区域。
+// 透明像素被替换为品红（颜色键，仅作绘制时不影响形状），HRGN 由窗口接管。
+// 返回的 HBITMAP 由调用者 DeleteObject；*outRgn 为新建区域（失败为 nullptr）。
+HBITMAP loadPinPng(int resId, SIZE& outSize, HRGN& outRgn)
 {
+    outRgn = nullptr;
     HRSRC hrs = FindResourceW(nullptr, MAKEINTRESOURCEW(resId), RT_RCDATA);
     if (!hrs) return nullptr;
     HGLOBAL hglob = LoadResource(nullptr, hrs);
@@ -35,14 +38,11 @@ HBITMAP loadPinPng(int resId, SIZE& outSize)
 
     IStream* stream = nullptr;
     if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream))) return nullptr;
-
     ULONG written = 0;
-    HRESULT hr = stream->Write(data, len, &written);
-    if (FAILED(hr)) {
+    if (FAILED(stream->Write(data, len, &written))) {
         stream->Release();
         return nullptr;
     }
-    // 回到流起点
     LARGE_INTEGER zero{};
     stream->Seek(zero, STREAM_SEEK_SET, nullptr);
 
@@ -54,8 +54,8 @@ HBITMAP loadPinPng(int resId, SIZE& outSize)
     BITMAPINFO bmi{};
 
     do {
-        hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                              IID_PPV_ARGS(&factory));
+        HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                      IID_PPV_ARGS(&factory));
         if (FAILED(hr)) break;
         hr = factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnDemand,
                                               &decoder);
@@ -64,8 +64,8 @@ HBITMAP loadPinPng(int resId, SIZE& outSize)
         if (FAILED(hr)) break;
         hr = factory->CreateFormatConverter(&conv);
         if (FAILED(hr)) break;
-        // 转成预乘 alpha BGRA —— UpdateLayeredWindow(AC_SRC_ALPHA) 的硬性要求
-        hr = conv->Initialize(frame, kPxFormat32bppPremultBGRA,
+        // 直通 BGRA（不做预乘——本方案用 HRGN + BitBlt，不需要预乘）
+        hr = conv->Initialize(frame, kPxFormat32bppBGRA,
                               WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
         if (FAILED(hr)) break;
 
@@ -74,12 +74,11 @@ HBITMAP loadPinPng(int resId, SIZE& outSize)
         outSize.cx = static_cast<int>(w);
         outSize.cy = static_cast<int>(h);
 
-        // 创建 32bpp 顶向下 DIB
-        bmi.bmiHeader.biSize     = sizeof(BITMAPINFOHEADER);
-        bmi.bmiHeader.biWidth    = static_cast<LONG>(w);
-        bmi.bmiHeader.biHeight   = -static_cast<LONG>(h); // 顶向下
-        bmi.bmiHeader.biPlanes   = 1;
-        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth       = static_cast<LONG>(w);
+        bmi.bmiHeader.biHeight      = -static_cast<LONG>(h); // 顶向下
+        bmi.bmiHeader.biPlanes      = 1;
+        bmi.bmiHeader.biBitCount    = 32;
         bmi.bmiHeader.biCompression = BI_RGB;
 
         void* bits = nullptr;
@@ -88,13 +87,45 @@ HBITMAP loadPinPng(int resId, SIZE& outSize)
             if (dib) DeleteObject(dib);
             break;
         }
-        // WIC 的 stride 是每行字节数（32bpp = w*4）
         const UINT stride = w * 4;
         hr = conv->CopyPixels(nullptr, stride, stride * h, static_cast<BYTE*>(bits));
         if (FAILED(hr)) {
             DeleteObject(dib);
             break;
         }
+
+        // 用 alpha 构建异形区域（按行合并连续段），透明像素置品红
+        auto* px = static_cast<BYTE*>(bits);
+        HRGN rgn = CreateRectRgn(0, 0, 0, 0);
+        if (!rgn) {
+            DeleteObject(dib);
+            break;
+        }
+        for (UINT y = 0; y < h; ++y) {
+            UINT x = 0;
+            while (x < w) {
+                const BYTE a = px[y * stride + x * 4 + 3];
+                if (a == 0) {
+                    // 透明 → 品红颜色键
+                    px[y * stride + x * 4 + 0] = 0xFF;
+                    px[y * stride + x * 4 + 1] = 0x00;
+                    px[y * stride + x * 4 + 2] = 0xFF;
+                    ++x;
+                    continue;
+                }
+                // 连续不透明段 → 一个矩形
+                UINT x2 = x + 1;
+                while (x2 < w && px[y * stride + x2 * 4 + 3] != 0) ++x2;
+                HRGN seg = CreateRectRgn(static_cast<int>(x), static_cast<int>(y),
+                                         static_cast<int>(x2), static_cast<int>(y) + 1);
+                if (seg) {
+                    CombineRgn(rgn, rgn, seg, RGN_OR);
+                    DeleteObject(seg);
+                }
+                x = x2;
+            }
+        }
+        outRgn = rgn;
         result = dib;
     } while (false);
 
@@ -104,6 +135,33 @@ HBITMAP loadPinPng(int resId, SIZE& outSize)
     if (factory) factory->Release();
     if (stream) stream->Release();
     return result;
+}
+
+// 计算图钉位置：优先对准标题栏"最小化"按钮（DWMWA_CAPTION_BUTTON_BOUNDS），
+// 无边框窗口取不到时退回右上角。
+POINT getPinPos(HWND target, const SIZE& size)
+{
+    POINT pos{};
+    RECT btn{};
+    const HRESULT hr = DwmGetWindowAttribute(target, DWMWA_CAPTION_BUTTON_BOUNDS,
+                                             &btn, sizeof(btn));
+    if (SUCCEEDED(hr) && btn.right > btn.left && btn.bottom > btn.top) {
+        // bounds 是"最小化+最大化+关闭"三个按钮的并集，最小化按钮取最左 1/3
+        const int btnW = (btn.right - btn.left) / 3;
+        const int cx   = btn.left + btnW / 2;
+        const int cy   = (btn.top + btn.bottom) / 2;
+        pos.x = cx - size.cx / 2;
+        pos.y = cy - size.cy / 2;
+        return pos;
+    }
+
+    // 兜底：标题栏右上角
+    RECT rc{};
+    GetWindowRect(target, &rc);
+    const int captionH = GetSystemMetrics(SM_CYCAPTION);
+    pos.x = rc.right - size.cx - 8;
+    pos.y = rc.top + std::max(4, static_cast<int>(captionH - size.cy) / 2);
+    return pos;
 }
 
 } // namespace
@@ -138,6 +196,7 @@ bool PinWnd::init()
         wc.lpfnWndProc   = wndProc;
         wc.hInstance     = hInst_;
         wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr; // 不预填充背景，由 WM_PAINT 画位图
         wc.lpszClassName = L"PinTopPinWnd";
         if (!RegisterClassExW(&wc)) return false;
         registered = true;
@@ -145,42 +204,27 @@ bool PinWnd::init()
 
     const int dpi = GetDpiForWindow(target_);
     const int px  = pickPinSize(dpi);
-    bmp_ = loadPinPng(px == 32 ? IDR_PIN32 : (px == 24 ? IDR_PIN24 : IDR_PIN16), size_);
-    if (!bmp_) return false;
-
-    // 图钉位置：目标窗口右上角标题栏内（右侧留边，避免压住系统按钮）
-    RECT rc{};
-    GetWindowRect(target_, &rc);
-    const int captionH = GetSystemMetrics(SM_CYCAPTION);
-    const int x = rc.right - size_.cx - 8;
-    const int y = rc.top + std::max(4, static_cast<int>(captionH - size_.cy) / 2);
-
-    hwnd_ = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-        L"PinTopPinWnd", L"", WS_POPUP | WS_VISIBLE,
-        x, y, size_.cx, size_.cy, nullptr, nullptr, hInst_, this);
-    if (!hwnd_) return false;
-
-    // 分层窗口：把位图通过 ULW_ALPHA 绘制（32bpp premultiplied alpha）
-    HDC screenDC = GetDC(nullptr);
-    HDC memDC    = CreateCompatibleDC(screenDC);
-    HDC winDC    = GetDC(hwnd_);
-    bool ok = false;
-    if (screenDC && memDC && winDC) {
-        HGDIOBJ old = SelectObject(memDC, bmp_);
-        POINT dst{ x, y };
-        POINT src{ 0, 0 };
-        BLENDFUNCTION blend{};
-        blend.BlendOp             = AC_SRC_OVER;
-        blend.SourceConstantAlpha = 255;
-        blend.AlphaFormat         = AC_SRC_ALPHA;
-        ok = UpdateLayeredWindow(hwnd_, winDC, &dst, &size_, memDC, &src, 0, &blend, ULW_ALPHA);
-        SelectObject(memDC, old);
+    HRGN rgn = nullptr;
+    bmp_ = loadPinPng(px == 32 ? IDR_PIN32 : (px == 24 ? IDR_PIN24 : IDR_PIN16), size_, rgn);
+    if (!bmp_ || !rgn) {
+        if (rgn) DeleteObject(rgn);
+        return false;
     }
-    if (winDC) ReleaseDC(hwnd_, winDC);
-    if (memDC) DeleteDC(memDC);
-    if (screenDC) ReleaseDC(nullptr, screenDC);
-    return ok;
+
+    const POINT pos = getPinPos(target_, size_);
+    hwnd_ = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        L"PinTopPinWnd", L"", WS_POPUP | WS_VISIBLE,
+        pos.x, pos.y, size_.cx, size_.cy, nullptr, nullptr, hInst_, this);
+    if (!hwnd_) {
+        DeleteObject(rgn);
+        return false;
+    }
+
+    // 窗口接管区域（销毁时自动释放），实例挂到窗口 userdata 供 wndProc 使用
+    SetWindowRgn(hwnd_, rgn, TRUE);
+    SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+    return true;
 }
 
 bool PinWnd::create(HWND target)
@@ -240,13 +284,9 @@ void PinWnd::repositionFor(HWND target)
     }
 
     ShowWindow(pin->hwnd_, SW_SHOWNOACTIVATE);
-    RECT rc{};
-    GetWindowRect(target, &rc);
-    const int captionH = GetSystemMetrics(SM_CYCAPTION);
-    const int x = rc.right - pin->size_.cx - 8;
-    const int y = rc.top + std::max(4, static_cast<int>(captionH - pin->size_.cy) / 2);
+    const POINT pos = getPinPos(target, pin->size_);
     // 保持图钉在 TOPMOST 层顶部（目标窗口置顶后可能遮挡图钉）
-    SetWindowPos(pin->hwnd_, HWND_TOPMOST, x, y, 0, 0,
+    SetWindowPos(pin->hwnd_, HWND_TOPMOST, pos.x, pos.y, 0, 0,
                  SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
@@ -263,9 +303,24 @@ PinWnd* PinWnd::find(HWND target)
 
 LRESULT CALLBACK PinWnd::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    PinWnd* self = reinterpret_cast<PinWnd*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!self) {
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
     switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(hwnd, &ps);
+        HDC mem = CreateCompatibleDC(dc);
+        HGDIOBJ old = SelectObject(mem, self->bmp_);
+        BitBlt(dc, 0, 0, self->size_.cx, self->size_.cy, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old);
+        DeleteDC(mem);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
     case WM_LBUTTONDOWN: {
-        // 先记录目标再统一移除，避免在迭代 all_ 期间修改容器
+        // 点击图钉：先记录目标再统一移除，避免在迭代 all_ 期间修改容器
         HWND target = nullptr;
         for (auto& [t, pin] : all_) {
             if (pin->hwnd_ == hwnd) {
@@ -276,8 +331,6 @@ LRESULT CALLBACK PinWnd::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         if (target) remove(target);
         return 0;
     }
-    case WM_DESTROY:
-        return 0;
     default:
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
