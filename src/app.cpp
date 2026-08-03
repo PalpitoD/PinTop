@@ -188,7 +188,9 @@ LRESULT App::handleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         placePinAt(POINT{ static_cast<int>(wParam), static_cast<int>(lParam) });
         return 0;
     case WM_HOTKEY:
-        togglePinFor(GetForegroundWindow());
+        if (wParam == HotKey::ID) { // 防御：只响应自己的热键 ID
+            togglePinFor(GetForegroundWindow());
+        }
         return 0;
     case WM_DESTROY:
         removeTrayIcon();

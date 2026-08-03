@@ -12,5 +12,6 @@ public:
 
     static constexpr UINT ID   = 1;
     static constexpr UINT VK   = 'P';
-    static constexpr UINT MODS = MOD_CONTROL | MOD_SHIFT;
+    // MOD_NOREPEAT：按住不重复触发（Win7+），避免置顶/取消快速闪烁
+    static constexpr UINT MODS = MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT;
 };
