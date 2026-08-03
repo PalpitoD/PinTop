@@ -35,7 +35,7 @@ bool LayerWnd::start(HWND owner)
     // 临时把系统箭头光标替换为图钉：任何窗口的 WM_SETCURSOR 设置箭头时
     // 都会显示图钉，无需依赖捕获/窗口消息，光标稳定保持。
     if (HCURSOR pin = CopyIcon(placePinCursor())) {
-        SetSystemCursor(pin, OCR_NORMAL);
+        SetSystemCursor(pin, 32512); // OCR_NORMAL（系统箭头光标 ID）
     }
     return true;
 }
