@@ -21,8 +21,10 @@ cmake --build build --config Release
 ## 功能状态
 
 - [x] 托盘图标 + 右键菜单
-- [ ] 放置图钉（置顶窗口）
-- [ ] 移除图钉
+- [x] 放置图钉（置顶窗口）：图层捕获选择目标，无合成鼠标输入
+- [x] 移除图钉（点击图钉 / 目标窗口销毁）
+- [x] 图钉跟随窗口移动（SetWinEventHook）
+- [x] SVG 图钉：WIC 解码带 alpha 位图 + UpdateLayeredWindow 抗锯齿
 - [ ] 热键
 - [ ] 自动置顶规则
 - [ ] 选项对话框

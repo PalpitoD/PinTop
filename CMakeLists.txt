@@ -18,6 +18,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_executable(PinTop WIN32
     src/main.cpp
     src/app.cpp
+    src/pin.cpp
+    src/layer.cpp
     app.rc
 )
 
@@ -42,5 +44,5 @@ if(MSVC)
     target_compile_options(PinTop PRIVATE $<$<CONFIG:Release>:/O2>)
 endif()
 
-# Win32 系统库
-target_link_libraries(PinTop PRIVATE user32 shell32 gdi32 comctl32)
+# Win32 系统库（windowscodecs: WIC 图钉 PNG 解码；ole32: COM）
+target_link_libraries(PinTop PRIVATE user32 shell32 gdi32 comctl32 windowscodecs ole32)

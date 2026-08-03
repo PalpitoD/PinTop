@@ -1,8 +1,11 @@
 #include "app.h"
 #include "resource.h"
+#include "pin.h"
+#include "layer.h"
 
 #include <shellapi.h>
 #include <cwchar>
+#include <cstdlib>
 
 namespace {
 
@@ -20,6 +23,10 @@ App& App::instance()
 int App::run(HINSTANCE hInst)
 {
     hInst_ = hInst;
+    PinWnd::setHInstance(hInst_);
+
+    // COM：WIC（图钉 PNG 解码）需要
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     // Per-Monitor V2 DPI 感知（Windows 10 1703+）：
     // 避免系统按位图缩放导致图标/坐标模糊错位。
@@ -29,12 +36,18 @@ int App::run(HINSTANCE hInst)
         return 1;
     }
     addTrayIcon();
+    installWinEventHook();
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+
+    // 退出清理：取消全部置顶并移除图钉
+    PinWnd::removeAll();
+    uninstallWinEventHook();
+    CoUninitialize();
     return static_cast<int>(msg.wParam);
 }
 
@@ -134,8 +147,7 @@ void App::onCommand(int id)
 {
     switch (id) {
     case CM_NEWPIN:
-        // TODO: 下一阶段实现 —— 进入"放置图钉"模式：
-        //       创建透明图层窗口捕获鼠标 → 点击目标窗口 → 在其最小化按钮上挂图钉。
+        startPinPlacement();
         break;
     case CM_EXIT:
         exitApp();
@@ -168,11 +180,67 @@ LRESULT App::handleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_COMMAND:
         onCommand(LOWORD(wParam));
         return 0;
+    case WM_PINREQ:
+        placePinAt(POINT{ static_cast<int>(wParam), static_cast<int>(lParam) });
+        return 0;
     case WM_DESTROY:
         removeTrayIcon();
         PostQuitMessage(0);
         return 0;
     default:
         return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+}
+
+void App::startPinPlacement()
+{
+    // 防重入：已在放置模式则忽略
+    if (LayerWnd::active()) return;
+    LayerWnd::start(mainWnd_);
+}
+
+void App::placePinAt(POINT pt)
+{
+    // 放置模式窗口已随点击销毁，这里兜底清理
+    LayerWnd::cancel();
+
+    HWND target = WindowFromPoint(pt);
+    if (!target) return;
+
+    // 取顶层根窗口，避免点在子控件上
+    HWND root = GetAncestor(target, GA_ROOT);
+    if (!root || root == GetDesktopWindow()) return;
+    if (root == mainWnd_) return; // 排除自己的隐藏宿主窗口
+
+    PinWnd::create(root);
+}
+
+void App::installWinEventHook()
+{
+    // 单钩子覆盖 [EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE] 范围：
+    // 目标窗口销毁时清理图钉，位置变化时图钉跟随。回调内按事件过滤。
+    winEventHook_ = SetWinEventHook(
+        EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE, nullptr,
+        winEventProc, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+}
+
+void App::uninstallWinEventHook()
+{
+    if (winEventHook_) {
+        UnhookWinEvent(winEventHook_);
+        winEventHook_ = nullptr;
+    }
+}
+
+void CALLBACK App::winEventProc(HWINEVENTHOOK, DWORD event, HWND hwnd,
+                                LONG idObject, LONG, DWORD, DWORD)
+{
+    if (idObject != OBJID_WINDOW || !hwnd) return;
+    if (!PinWnd::isPinned(hwnd)) return; // 快速过滤：只关心已置顶窗口
+
+    if (event == EVENT_OBJECT_LOCATIONCHANGE) {
+        PinWnd::repositionFor(hwnd);
+    } else if (event == EVENT_OBJECT_DESTROY) {
+        PinWnd::remove(hwnd);
     }
 }

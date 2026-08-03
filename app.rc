@@ -1,3 +1,7 @@
 #include "src/resource.h"
 
 IDI_APP ICON "res/app.ico"
+
+IDR_PIN16 RCDATA "res/pin-16.png"
+IDR_PIN24 RCDATA "res/pin-24.png"
+IDR_PIN32 RCDATA "res/pin-32.png"
