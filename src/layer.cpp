@@ -46,10 +46,12 @@ bool LayerWnd::start(HWND owner)
     if (!hwnd_) return false;
 
     // 让图层窗口捕获鼠标，但不注入系统级输入：
-    // 直接投递 WM_LBUTTONDOWN 触发 proc 的初始化分支（SetCapture + 状态标记），
-    // 光标经 WM_SETCURSOR 变为准星。旧版用 SetCursorPos + mouse_event(LEFTDOWN)
-    // 合成真实点击，会让左键在全局保持按下，拖拽其他窗口。
+    // 直接投递 WM_LBUTTONDOWN 触发 proc 的初始化分支（SetCapture + 状态标记）。
+    // 旧版用 SetCursorPos + mouse_event(LEFTDOWN) 合成真实点击，会让左键在全局保持按下，拖拽其他窗口。
     SendMessageW(hwnd_, WM_LBUTTONDOWN, MK_LBUTTON, 0);
+    // 捕获期间 WM_SETCURSOR 不会发送（鼠标不在本窗口上），必须立即设置光标
+    // 并在 WM_MOUSEMOVE 中持续保持。
+    SetCursor(placePinCursor());
     return true;
 }
 
@@ -74,9 +76,13 @@ LRESULT CALLBACK LayerWnd::proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         gotInitLButtonDown = false;
         return 0;
     case WM_SETCURSOR:
-        // 捕获期间显式设置图钉光标（类光标有时不生效，尤其捕获其他窗口消息时）
+        // 鼠标恰好在本窗口上时设置图钉光标
         SetCursor(placePinCursor());
         return TRUE;
+    case WM_MOUSEMOVE:
+        // 捕获期间鼠标消息都发给本窗口：持续保持图钉光标
+        SetCursor(placePinCursor());
+        return 0;
     case WM_LBUTTONDOWN: {
         const int x = GET_X_LPARAM(lParam);
         const int y = GET_Y_LPARAM(lParam);
