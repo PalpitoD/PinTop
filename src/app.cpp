@@ -2,6 +2,7 @@
 #include "resource.h"
 #include "pin.h"
 #include "layer.h"
+#include "hotkey.h"
 
 #include <shellapi.h>
 #include <cwchar>
@@ -38,6 +39,8 @@ int App::run(HINSTANCE hInst)
     }
     addTrayIcon();
     installWinEventHook();
+    // 全局热键失败不阻塞启动（可能被其他程序占用）
+    HotKey::registerDefault(mainWnd_);
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0)) {
@@ -184,6 +187,9 @@ LRESULT App::handleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_PINREQ:
         placePinAt(POINT{ static_cast<int>(wParam), static_cast<int>(lParam) });
         return 0;
+    case WM_HOTKEY:
+        togglePinFor(GetForegroundWindow());
+        return 0;
     case WM_DESTROY:
         removeTrayIcon();
         PostQuitMessage(0);
@@ -214,6 +220,19 @@ void App::placePinAt(POINT pt)
     if (root == mainWnd_) return; // 排除自己的隐藏宿主窗口
 
     PinWnd::create(root);
+}
+
+void App::togglePinFor(HWND wnd)
+{
+    if (!wnd) return;
+    HWND root = GetAncestor(wnd, GA_ROOT);
+    if (!root || root == GetDesktopWindow() || root == mainWnd_) return;
+    if (!IsWindowVisible(root)) return; // 隐藏窗口不参与置顶
+    if (PinWnd::isPinned(root)) {
+        PinWnd::remove(root);
+    } else {
+        PinWnd::create(root);
+    }
 }
 
 void App::installWinEventHook()

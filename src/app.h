@@ -35,6 +35,7 @@ private:
     // 置顶功能
     void startPinPlacement();  // 进入"放置图钉"模式（图层捕获鼠标）
     void placePinAt(POINT pt); // 在屏幕坐标处放置图钉
+    void togglePinFor(HWND wnd); // 热键：置顶/取消置顶给定窗口
     void installWinEventHook();
     void uninstallWinEventHook();
 

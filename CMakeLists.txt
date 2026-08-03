@@ -20,6 +20,7 @@ add_executable(PinTop WIN32
     src/app.cpp
     src/pin.cpp
     src/layer.cpp
+    src/hotkey.cpp
     app.rc
 )
 

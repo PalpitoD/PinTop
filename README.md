@@ -25,7 +25,7 @@ cmake --build build --config Release
 - [x] 移除图钉（点击图钉 / 目标窗口销毁）
 - [x] 图钉跟随窗口移动（SetWinEventHook）
 - [x] SVG 图钉：WIC 解码带 alpha 位图 + UpdateLayeredWindow 抗锯齿
-- [ ] 热键
+- [x] 热键（Ctrl+Shift+P 快速置顶/取消置顶前台窗口）
 - [ ] 自动置顶规则
 - [ ] 选项对话框
 
